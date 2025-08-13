@@ -1,4 +1,10 @@
 <!doctype html>
 <title>Python Sandbox</title>
 <h1>It works 🎉</h1>
-<p><a href="/register">Register</a></p>
+
+{% if session.email %}
+  <p>Logged in as <b>{{ session.email }}</b></p>
+  <p><a href="/logout">Logout</a></p>
+{% else %}
+  <p><a href="/register">Register</a> · <a href="/login">Login</a></p>
+{% endif %}
