@@ -3,9 +3,25 @@ from flask import Flask, render_template, request, redirect, url_for, session
 from sqlalchemy import create_engine, text
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from functools import wraps
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        return fn(*args, **kwargs)
+    return wrapper
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-only-change-me")
+app.config.update(
+    SESSION_COOKIE_SECURE=True,      # csak HTTPS-en
+    SESSION_COOKIE_HTTPONLY=True,    # JS ne lássa
+    SESSION_COOKIE_SAMESITE="Lax",   # CSRF ellen alap
+    PERMANENT_SESSION_LIFETIME=3600, # 1 óra
+)
+
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
@@ -17,6 +33,12 @@ ph = PasswordHasher()
 @app.get("/")
 def home():
     return render_template("index.html")
+    
+@app.get("/profile")
+@login_required
+def profile():
+    return {"email": session["email"], "role": session["role"]}
+
 
 @app.get("/health")
 def health():
