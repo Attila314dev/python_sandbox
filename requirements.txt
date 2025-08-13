@@ -2,3 +2,4 @@ Flask
 gunicorn
 python-dotenv
 psycopg[binary]
+sqlalchemy
