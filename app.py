@@ -49,10 +49,31 @@ def health():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-@app.get("/test-session")
-def test_session():
-    session["ping"] = "pong"
-    return {"ok": True}
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "GET":
+        return render_template("register.html")
+
+    email = (request.form.get("email") or "").strip().lower()
+    password = request.form.get("password") or ""
+
+    if not email or not password:
+        return {"ok": False, "error": "missing email or password"}, 400
+
+    pwd_hash = ph.hash(password)
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO users (email, password_hash)
+                    VALUES (:email, :password_hash)
+                """),
+                {"email": email, "password_hash": pwd_hash},
+            )
+    except Exception:
+        return {"ok": False, "error": "email already exists or db error"}, 400
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
