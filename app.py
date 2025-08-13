@@ -1,11 +1,10 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session
 from sqlalchemy import create_engine, text
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 app = Flask(__name__)
-
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-only-change-me")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -14,7 +13,6 @@ if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=2, max_overflow=0)
 ph = PasswordHasher()
-
 
 @app.get("/")
 def home():
@@ -29,8 +27,10 @@ def health():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-from sqlalchemy import text
-from argon2.exceptions import VerifyMismatchError
+@app.get("/test-session")
+def test_session():
+    session["ping"] = "pong"
+    return {"ok": True}
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -56,15 +56,14 @@ def login():
         ph.verify(row["password_hash"], password)
     except VerifyMismatchError:
         return {"ok": False, "error": "invalid credentials"}, 401
-        
-@app.get("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("home"))
 
-    # ok: session
+    # ✅ sikeres bejelentkezés
     session["user_id"] = row["id"]
     session["email"] = email
     session["role"] = row["role"]
     return redirect(url_for("home"))
 
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("home"))
