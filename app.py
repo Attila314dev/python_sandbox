@@ -7,6 +7,7 @@ from functools import wraps
 import secrets
 import requests
 from datetime import datetime, timedelta, timezone
+from sqlalchemy.exc import IntegrityError
 
 def make_verify_token():
     return secrets.token_urlsafe(32)
@@ -72,6 +73,48 @@ def health():
         return {"ok": True, "db": "connected"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "GET":
+        return render_template("register.html")
+
+    # POST
+    email = (request.form.get("email") or "").strip().lower()
+    password = request.form.get("password") or ""
+    if not email or not password:
+        return {"ok": False, "error": "missing email or password"}, 400
+
+    pwd_hash = ph.hash(password)
+
+    try:
+        with engine.begin() as conn:
+            user_id = conn.execute(
+                text("""
+                    INSERT INTO users (email, password_hash)
+                    VALUES (:email, :password_hash)
+                    ON CONFLICT (email) DO NOTHING
+                    RETURNING id
+                """),
+                {"email": email, "password_hash": pwd_hash},
+            ).scalar()
+
+            if not user_id:
+                return {"ok": False, "error": "email already exists"}, 400
+
+            # ha használod a verifikációt:
+            token = make_verify_token()
+            expires = datetime.now(timezone.utc) + timedelta(hours=24)
+            conn.execute(
+                text("INSERT INTO verify_tokens (user_id, token, expires_at) VALUES (:u,:t,:e)"),
+                {"u": user_id, "t": token, "e": expires},
+            )
+        send_verification_email(email, token)
+    except IntegrityError:
+        return {"ok": False, "error": "email already exists"}, 400
+
+    return redirect(url_for("login"))
 
 
 @app.route("/login", methods=["GET", "POST"])
