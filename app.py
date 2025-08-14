@@ -200,6 +200,46 @@ def verify():
         conn.execute(text("DELETE FROM verify_tokens WHERE token = :t"), {"t": token})
 
     return redirect(url_for("login"))
+@app.route("/mfa", methods=["GET", "POST"])
+def mfa():
+    # kell, hogy legyen pending MFA state
+    if "mfa_user_id" not in session:
+        return redirect(url_for("login"))
+
+    if request.method == "GET":
+        return render_template("mfa.html")
+
+    code = (request.form.get("code") or "").strip()
+    if not code:
+        return {"ok": False, "error": "missing code"}, 400
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("""
+                SELECT id, expires_at
+                FROM mfa_codes
+                WHERE user_id = :u AND code = :c
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"u": session["mfa_user_id"], "c": code},
+        ).mappings().first()
+
+        if not row:
+            return {"ok": False, "error": "invalid code"}, 401
+        if row["expires_at"] < now:
+            conn.execute(text("DELETE FROM mfa_codes WHERE id = :id"), {"id": row["id"]})
+            return {"ok": False, "error": "code expired"}, 401
+
+        # OK: kód elfogadva → végleges login + takarítás
+        conn.execute(text("DELETE FROM mfa_codes WHERE user_id = :u"), {"u": session["mfa_user_id"]})
+
+    # finalize login
+    session["user_id"] = session.pop("mfa_user_id")
+    session["email"] = session.pop("mfa_email")
+    session["role"] = session.pop("mfa_role")
+    return redirect(url_for("home"))
 
 
 
