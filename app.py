@@ -4,6 +4,30 @@ from sqlalchemy import create_engine, text
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from functools import wraps
+import secrets
+import requests
+from datetime import datetime, timedelta, timezone
+
+def make_verify_token():
+    return secrets.token_urlsafe(32)
+
+def send_verification_email(to_email: str, token: str):
+    api_key = os.getenv("RESEND_API_KEY")
+    from_email = os.getenv("FROM_EMAIL", "no-reply@resend.dev")
+    base = os.getenv("APP_BASE_URL", "http://localhost:5000")
+    link = f"{base}/verify?token={token}"
+
+    payload = {
+        "from": f"My Tutorial <{from_email}>",
+        "to": [to_email],
+        "subject": "Verify your email",
+        "html": f"<p>Click to verify your account:</p><p><a href=\"{link}\">{link}</a></p>"
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        requests.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=10)
+    except Exception:
+        pass  # nem dobjuk el a folyamatot, max nem megy ki a levél
 
 def login_required(fn):
     @wraps(fn)
