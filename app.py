@@ -85,19 +85,44 @@ def register():
     if not email or not password:
         return {"ok": False, "error": "missing email or password"}, 400
 
+    # jelszó hash
     pwd_hash = ph.hash(password)
 
     try:
         with engine.begin() as conn:
-            conn.execute(
+            # user beszúrás + id visszakérés
+            user_id = conn.execute(
                 text("""
                     INSERT INTO users (email, password_hash)
                     VALUES (:email, :password_hash)
+                    ON CONFLICT (email) DO NOTHING
+                    RETURNING id
                 """),
                 {"email": email, "password_hash": pwd_hash},
+            ).scalar()
+
+            if not user_id:
+                return {"ok": False, "error": "email already exists"}, 400
+
+            # verifikációs token
+            token = make_verify_token()
+            expires = datetime.now(timezone.utc) + timedelta(hours=24)
+
+            conn.execute(
+                text("""
+                    INSERT INTO verify_tokens (user_id, token, expires_at)
+                    VALUES (:uid, :token, :exp)
+                """),
+                {"uid": user_id, "token": token, "exp": expires},
             )
+
+        # e-mail küldés a DB tranzakció után
+        send_verification_email(email, token)
     except Exception:
-        return {"ok": False, "error": "email already exists or db error"}, 400
+        return {"ok": False, "error": "db error"}, 400
+
+    # irány a login oldal – de belépni csak verifikáció után lehet
+    return redirect(url_for("login"))
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -119,16 +144,53 @@ def login():
     if not row:
         return {"ok": False, "error": "invalid credentials"}, 401
 
-    try:
+        try:
         ph.verify(row["password_hash"], password)
     except VerifyMismatchError:
         return {"ok": False, "error": "invalid credentials"}, 401
 
-    # ✅ sikeres bejelentkezés
+    # csak verifikált user léphet be
+    with engine.connect() as conn:
+        vrow = conn.execute(
+            text("SELECT is_verified FROM users WHERE id = :id"),
+            {"id": row["id"]}
+        ).mappings().first()
+    if not vrow or not vrow["is_verified"]:
+        return {"ok": False, "error": "email not verified"}, 403
+
+    # OK: session
     session["user_id"] = row["id"]
     session["email"] = email
     session["role"] = row["role"]
     return redirect(url_for("home"))
+
+
+@app.get("/verify")
+def verify():
+    token = (request.args.get("token") or "").strip()
+    if not token:
+        return {"ok": False, "error": "missing token"}, 400
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT user_id, expires_at FROM verify_tokens WHERE token = :t LIMIT 1"),
+            {"t": token}
+        ).mappings().first()
+
+        if not row:
+            return {"ok": False, "error": "invalid token"}, 400
+        if row["expires_at"] < now:
+            conn.execute(text("DELETE FROM verify_tokens WHERE token = :t"), {"t": token})
+            return {"ok": False, "error": "token expired"}, 400
+
+        # aktiválás + token törlés
+        conn.execute(text("UPDATE users SET is_verified = true WHERE id = :uid"), {"uid": row["user_id"]})
+        conn.execute(text("DELETE FROM verify_tokens WHERE token = :t"), {"t": token})
+
+    return redirect(url_for("login"))
+
+
 
 @app.get("/logout")
 def logout():
