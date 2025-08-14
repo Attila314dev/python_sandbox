@@ -8,6 +8,33 @@ import secrets
 import requests
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
+import secrets, sys
+from datetime import datetime, timedelta, timezone
+import requests
+from sqlalchemy import text
+from argon2.exceptions import VerifyMismatchError
+
+def make_mfa_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"  # 000000..999999
+
+def send_mfa_email(to_email: str, code: str):
+    api_key = os.getenv("RESEND_API_KEY")
+    from_email = os.getenv("FROM_EMAIL", "no-reply@resend.dev")
+    payload = {
+        "from": f"My Tutorial <{from_email}>",
+        "to": [to_email],
+        "subject": "Your login code",
+        "html": f"<p>Your code is: <b>{code}</b></p><p>It expires in 10 minutes.</p>",
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        r = requests.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=10)
+        if r.status_code >= 300:
+            print(f"[Resend] {r.status_code} {r.text}", file=sys.stderr)
+    except Exception as e:
+        print(f"[Resend EXC] {e}", file=sys.stderr)
+    # dev log:
+    print(f"[DEV] MFA code for {to_email}: {code}", file=sys.stderr)
 
 def make_verify_token():
     return secrets.token_urlsafe(32)
@@ -117,6 +144,7 @@ def register():
     return redirect(url_for("login"))
 
 
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
@@ -127,15 +155,10 @@ def login():
     if not email or not password:
         return {"ok": False, "error": "missing email or password"}, 400
 
-    # user lekérés (hozzuk az is_verified-et is)
+    # user lekérés
     with engine.connect() as conn:
         row = conn.execute(
-            text("""
-                SELECT id, password_hash, role, is_verified
-                FROM users
-                WHERE email = :email
-                LIMIT 1
-            """),
+            text("SELECT id, password_hash, role FROM users WHERE email = :email LIMIT 1"),
             {"email": email}
         ).mappings().first()
 
@@ -143,19 +166,15 @@ def login():
         return {"ok": False, "error": "invalid credentials"}, 401
 
     try:
-        ph.verify(row["password_hash"], password)   # ← EZ legyen a try alatt beljebb húzva
+        ph.verify(row["password_hash"], password)
     except VerifyMismatchError:
         return {"ok": False, "error": "invalid credentials"}, 401
 
-    if not row["is_verified"]:
-        return {"ok": False, "error": "email not verified"}, 403
-
-    # OK → session
+    # ok: session
     session["user_id"] = row["id"]
     session["email"] = email
     session["role"] = row["role"]
     return redirect(url_for("home"))
-    
 
 @app.get("/verify")
 def verify():
