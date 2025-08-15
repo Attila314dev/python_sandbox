@@ -32,3 +32,14 @@ button:hover{filter:brightness(1.05)} button:active{transform:translateY(1px)}
   padding:4px 6px; border-radius:8px;
 }
 .pw-toggle:hover{color:var(--text); background:rgba(255,255,255,.05)}
+.status-grid{display:grid;gap:16px;margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.status-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+.status-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.status-head h3{margin:0;font-size:16px}
+.badge{border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}
+.badge.ok{border-color:rgba(120,224,139,.4);background:rgba(120,224,139,.12);color:var(--success)}
+.badge.warn{border-color:rgba(90,197,215,.35);background:rgba(90,197,215,.12);color:var(--primary-600)}
+.badge.err{border-color:rgba(230,106,106,.4);background:rgba(230,106,106,.12);color:var(--danger)}
+.kv{display:flex;gap:8px;align-items:baseline;color:var(--muted);font-size:14px;margin:6px 0}
+.kv span{min-width:72px;opacity:.85}
+.kv a, .kv code{color:var(--text);word-break:break-all}
