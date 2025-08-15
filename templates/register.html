@@ -2,12 +2,38 @@
 <link rel="stylesheet" href="/static/styles.css">
 <script src="/static/app.js" defer></script>
 <div class="container"><div class="card">
-<title>Register</title>
-<h1>Register</h1>
-<form method="post" action="/register">
-  <label>Email: <input type="email" name="email" required></label><br>
-  <label>Password: <input type="password" name="password" minlength="8" required></label><br>
-  <button type="submit">Create account</button>
-</form>
-<p><a href="/">Home</a></p>
+  <h1>Register</h1>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="stack">
+        {% for cat,msg in messages %}
+          <div class="alert {{ 'alert-success' if cat=='success' else ('alert-error' if cat=='error' else '') }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <form method="post" action="/register">
+    <label>Email
+      <input type="email" name="email" required>
+    </label>
+
+    <label>Password
+      <div class="field">
+        <input id="reg_pw" type="password" name="password" minlength="8" required>
+        <button type="button" class="pw-toggle" data-target="reg_pw">👁</button>
+      </div>
+    </label>
+
+    <label>Confirm password
+      <div class="field">
+        <input id="reg_pw2" type="password" name="password2" minlength="8" required>
+        <button type="button" class="pw-toggle" data-target="reg_pw2">👁</button>
+      </div>
+    </label>
+
+    <button type="submit">Create account</button>
+  </form>
+  <p class="muted"><a href="/">Home</a></p>
 </div></div>
