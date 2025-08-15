@@ -12,7 +12,74 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 import requests
+import urllib.parse
 
+def _db_info_from_url(db_url: str):
+    try:
+        p = urllib.parse.urlparse(db_url)
+        host = p.hostname or "-"
+        db   = (p.path or "/").lstrip("/") or "-"
+        return host, db
+    except Exception:
+        return "-", "-"
+
+def build_status():
+    # Render WS
+    app_url = (os.getenv("APP_BASE_URL") or request.url_root).rstrip("/")
+    ws_ok = True
+    try:
+        r = requests.get(f"{app_url}/health", timeout=3)
+        ws_ok = (r.status_code == 200 and (r.json().get("ok") is True))
+    except Exception:
+        ws_ok = False
+
+    # GitHub
+    gh_url = os.getenv("GITHUB_REPO_URL")
+
+    # Resend (nagyon egyszerű “él-e az API kulcs” próba)
+    resend_key = os.getenv("RESEND_API_KEY")
+    resend_status = {"label": "Not configured", "kind": "warn"}
+    if resend_key:
+        try:
+            rr = requests.get(
+                "https://api.resend.com/domains",
+                headers={"Authorization": f"Bearer {resend_key}"},
+                timeout=5,
+            )
+            if 200 <= rr.status_code < 300:
+                # Nem bontjuk ki a domain listát most; a lényeg, hogy az API él
+                resend_status = {"label": "API OK (domain verify ajánlott)", "kind": "ok"}
+            elif rr.status_code in (401, 403):
+                resend_status = {"label": "API key / sandbox limit (verify domain kell)", "kind": "warn"}
+            else:
+                resend_status = {"label": f"API error {rr.status_code}", "kind": "err"}
+        except Exception:
+            resend_status = {"label": "API unreachable", "kind": "err"}
+
+    # Neon DB
+    db_ok = True
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+    host, dbname = _db_info_from_url(DATABASE_URL)
+
+    # Domain/DNS
+    domain_name = os.getenv("DOMAIN_NAME") or "—"
+    dns_provider = os.getenv("DNS_PROVIDER") or "—"
+
+    return {
+        "render": {
+            "up": ws_ok,
+            "url": app_url,
+            "commit": os.getenv("RENDER_GIT_COMMIT") or os.getenv("GIT_COMMIT"),
+        },
+        "github": {"url": gh_url},
+        "resend": resend_status,
+        "neon": {"ok": db_ok, "host": host, "db": dbname},
+        "domain": {"name": domain_name, "dns": dns_provider},
+    }
 
 # -----------------------------
 # Flask app & config
@@ -127,7 +194,7 @@ def send_mfa_email(to_email: str, code: str) -> None:
 # -----------------------------
 @app.get("/")
 def home():
-    return render_template("index.html")
+    return render_template("index.html", status=build_status())
 
 @app.get("/profile")
 @login_required
