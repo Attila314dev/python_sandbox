@@ -196,6 +196,10 @@ def send_mfa_email(to_email: str, code: str) -> None:
 def home():
     return render_template("index.html", status=build_status())
 
+@app.get("/status.json")
+def status_json():
+    return build_status()
+
 @app.get("/profile")
 @login_required
 def profile():
