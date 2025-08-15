@@ -331,27 +331,35 @@ def resend_verification():
         flash("Túl sok kérés. Próbáld később.", "error")
         return redirect(url_for("resend_verification"))
 
-    # próbálunk új tokent küldeni, de a válasz mindig általános
+    sent = False
     try:
         with engine.begin() as conn:
             u = conn.execute(
                 text("SELECT id, is_verified FROM users WHERE email=:em LIMIT 1"),
                 {"em": email},
             ).mappings().first()
+
             if u and not u["is_verified"]:
                 token = make_verify_token()
                 expires = datetime.now(timezone.utc) + timedelta(hours=24)
-                conn.execute(text("DELETE FROM verify_tokens WHERE user_id = :u"), {"u": u["id"]})
+                conn.execute(text("DELETE FROM verify_tokens WHERE user_id = :u"),
+                             {"u": u["id"]})
                 conn.execute(
                     text("INSERT INTO verify_tokens (user_id, token, expires_at) VALUES (:u,:t,:e)"),
                     {"u": u["id"], "t": token, "e": expires},
                 )
                 link = url_for("verify", token=token, _external=True)
                 send_verification_email(email, link)
-        log_attempt(ip, email, "resend", True)
-    except Exception:
-        log_attempt(ip, email, "resend", False)
+                sent = True
+    finally:
+        # pontos log: csak akkor success, ha tényleg küldtünk
+        log_attempt(ip, email, "resend", sent)
+        # dev log, hogy tudd miért nem ment ki
+        print(f"[DEV] resend: exists={bool(u) if 'u' in locals() else None}, "
+              f"verified={None if not u else u['is_verified']}, sent={sent}",
+              file=sys.stderr)
 
+    # a felhasználónak mindig általános válasz (privacy)
     flash("Ha létezik és nincs megerősítve az email, új linket küldtünk.", "success")
     return redirect(url_for("login"))
 
