@@ -1,13 +1,19 @@
 <!doctype html>
 <link rel="stylesheet" href="/static/styles.css">
-<title>Python Sandbox</title>
 <div class="container"><div class="card">
-<h1>It works 🎉</h1>
-
-{% if session.email %}
-  <p>Logged in as <b>{{ session.email }}</b></p>
-  <p><a href="/logout">Logout</a></p>
-{% else %}
-  <p><a href="/register">Register</a> · <a href="/login">Login</a></p>
-{% endif %}
+  <h1>Python Sandbox</h1>
+  {% if session.email %}
+    <p>Logged in as <b>{{ session.email }}</b></p>
+    <div class="nav">
+      <a href="/profile">Profile</a>
+      <a href="/change-password">Change password</a>
+      <a href="/logout">Logout</a>
+    </div>
+  {% else %}
+    <div class="nav">
+      <a href="/register">Register</a>
+      <a href="/login">Login</a>
+      <a href="/resend-verification">Resend verification</a>
+    </div>
+  {% endif %}
 </div></div>
