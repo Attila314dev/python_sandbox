@@ -22,3 +22,13 @@ button:hover{filter:brightness(1.05)} button:active{transform:translateY(1px)}
 .alert{border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .alert-success{border-color:rgba(120,224,139,.4);background:rgba(120,224,139,.08);color:var(--success)}
 .alert-error{border-color:rgba(230,106,106,.4);background:rgba(230,106,106,.08);color:var(--danger)}
+.muted{color:var(--muted)}
+.stack{display:grid;gap:10px;margin-bottom:14px}
+.field{position:relative}
+.field input{width:100%;padding-right:42px}
+.pw-toggle{
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  background:transparent; border:0; cursor:pointer; font-size:18px; color:var(--muted);
+  padding:4px 6px; border-radius:8px;
+}
+.pw-toggle:hover{color:var(--text); background:rgba(255,255,255,.05)}
