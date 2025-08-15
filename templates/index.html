@@ -3,6 +3,17 @@
 <script src="/static/app.js" defer></script>
 <div class="container"><div class="card">
   <h1>Python Sandbox</h1>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="stack">
+        {% for cat,msg in messages %}
+          <div class="alert {{ 'alert-success' if cat=='success' else ('alert-error' if cat=='error' else '') }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
   {% if session.email %}
     <p>Logged in as <b>{{ session.email }}</b></p>
     <div class="nav">
@@ -17,4 +28,52 @@
       <a href="/resend-verification">Resend verification</a>
     </div>
   {% endif %}
+
+  <h2 style="margin-top:20px">Service status</h2>
+  {% set s = status %}
+  <div class="status-grid">
+    <div class="status-card">
+      <div class="status-head">
+        <h3>Render (Web Service)</h3>
+        <span class="badge {{ 'ok' if s.render.up else 'err' }}">{{ 'UP' if s.render.up else 'DOWN' }}</span>
+      </div>
+      <div class="kv"><span>URL</span>{% if s.render.url %}<a href="{{ s.render.url }}">{{ s.render.url }}</a>{% else %}—{% endif %}</div>
+      {% if s.render.commit %}<div class="kv"><span>Commit</span><code>{{ s.render.commit[:7] }}</code></div>{% endif %}
+    </div>
+
+    <div class="status-card">
+      <div class="status-head">
+        <h3>GitHub repo</h3>
+        <span class="badge {{ 'ok' if s.github.url else 'warn' }}">{{ 'SET' if s.github.url else 'MISSING' }}</span>
+      </div>
+      <div class="kv"><span>URL</span>{% if s.github.url %}<a href="{{ s.github.url }}">{{ s.github.url }}</a>{% else %}—{% endif %}</div>
+    </div>
+
+    <div class="status-card">
+      <div class="status-head">
+        <h3>Resend</h3>
+        <span class="badge {{ 'ok' if s.resend.kind=='ok' else ('warn' if s.resend.kind=='warn' else 'err') }}">{{ s.resend.label }}</span>
+      </div>
+      <div class="kv"><span>Dashboard</span><a href="https://resend.com/dashboard">resend.com</a></div>
+    </div>
+
+    <div class="status-card">
+      <div class="status-head">
+        <h3>Neon DB</h3>
+        <span class="badge {{ 'ok' if s.neon.ok else 'err' }}">{{ 'OK' if s.neon.ok else 'ERR' }}</span>
+      </div>
+      <div class="kv"><span>Host</span><code>{{ s.neon.host }}</code></div>
+      <div class="kv"><span>DB</span><code>{{ s.neon.db }}</code></div>
+      <div class="kv"><span>Console</span><a href="https://console.neon.tech">neon.tech</a></div>
+    </div>
+
+    <div class="status-card">
+      <div class="status-head">
+        <h3>Domain</h3>
+        <span class="badge {{ 'ok' if s.domain.name!='—' else 'warn' }}">{{ 'SET' if s.domain.name!='—' else 'MISSING' }}</span>
+      </div>
+      <div class="kv"><span>Name</span>{{ s.domain.name }}</div>
+      <div class="kv"><span>DNS</span>{{ s.domain.dns }}</div>
+    </div>
+  </div>
 </div></div>
