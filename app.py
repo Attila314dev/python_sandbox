@@ -55,7 +55,26 @@ def login_required(fn):
             return redirect(url_for("login"))
         return fn(*args, **kwargs)
     return wrapper
+    
+def client_ip() -> str:
+    return request.remote_addr or "0.0.0.0"
 
+def log_attempt(ip: str, email: str | None, kind: str, success: bool) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO auth_attempts (ip, email, kind, success) VALUES (:ip,:em,:k,:s)"),
+            {"ip": ip, "em": email, "k": kind, "s": success},
+        )
+
+def too_many_failures(ip: str, kind: str, minutes: int, limit: int) -> bool:
+    window_start = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    with engine.connect() as conn:
+        n = conn.execute(
+            text("""SELECT COUNT(*) FROM auth_attempts
+                    WHERE ip=:ip AND kind=:k AND success=false AND ts > :ws"""),
+            {"ip": ip, "k": kind, "ws": window_start},
+        ).scalar()
+    return (n or 0) >= limit
 
 def make_verify_token() -> str:
     return secrets.token_urlsafe(32)
@@ -186,98 +205,176 @@ def login():
     if request.method == "GET":
         return render_template("login.html")
 
+    ip = client_ip()
+    if too_many_failures(ip, "login", minutes=1, limit=5):
+        return {"ok": False, "error": "too many attempts, try again soon"}, 429
+
     email = (request.form.get("email") or "").strip().lower()
     password = request.form.get("password") or ""
     if not email or not password:
+        log_attempt(ip, email, "login", False)
         return {"ok": False, "error": "missing email or password"}, 400
 
-    # user lekérés (is_verified-del együtt)
     with engine.connect() as conn:
         row = conn.execute(
-            text("""
-                SELECT id, password_hash, role, is_verified
-                FROM users
-                WHERE email = :email
-                LIMIT 1
-            """),
+            text("""SELECT id, password_hash, role, is_verified
+                    FROM users WHERE email = :email LIMIT 1"""),
             {"email": email}
         ).mappings().first()
 
     if not row:
+        log_attempt(ip, email, "login", False)
         return {"ok": False, "error": "invalid credentials"}, 401
 
-    # jelszó ellenőrzés
     try:
         ph.verify(row["password_hash"], password)
     except VerifyMismatchError:
+        log_attempt(ip, email, "login", False)
         return {"ok": False, "error": "invalid credentials"}, 401
 
-    # kötelező email-verifikáció
     if not row["is_verified"]:
+        log_attempt(ip, email, "login", False)
         return {"ok": False, "error": "email not verified"}, 403
 
-    # MFA: 6 jegyű kód (10 perc)
+    # MFA kód
     code = make_mfa_code()
     expires = datetime.now(timezone.utc) + timedelta(minutes=10)
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM mfa_codes WHERE user_id = :u"), {"u": row["id"]})
         conn.execute(
-            text("INSERT INTO mfa_codes (user_id, code, expires_at) VALUES (:u, :c, :e)"),
+            text("INSERT INTO mfa_codes (user_id, code, expires_at) VALUES (:u,:c,:e)"),
             {"u": row["id"], "c": code, "e": expires},
         )
-
     send_mfa_email(email, code)
 
-    # fél-login state
     session.clear()
     session["mfa_user_id"] = row["id"]
     session["mfa_email"] = email
     session["mfa_role"] = row["role"]
 
+    log_attempt(ip, email, "login", True)
     return redirect(url_for("mfa"))
 
 
 @app.route("/mfa", methods=["GET", "POST"])
 def mfa():
-    # kell pending MFA state
     if "mfa_user_id" not in session:
         return redirect(url_for("login"))
 
+    ip = client_ip()
     if request.method == "GET":
         return render_template("mfa.html")
 
+    if too_many_failures(ip, "mfa", minutes=10, limit=5):
+        return {"ok": False, "error": "too many attempts, try again later"}, 429
+
     code = (request.form.get("code") or "").strip()
     if not code:
+        log_attempt(ip, session.get("mfa_email"), "mfa", False)
         return {"ok": False, "error": "missing code"}, 400
 
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         row = conn.execute(
-            text("""
-                SELECT id, expires_at
-                FROM mfa_codes
-                WHERE user_id = :u AND code = :c
-                ORDER BY created_at DESC
-                LIMIT 1
-            """),
+            text("""SELECT id, expires_at FROM mfa_codes
+                    WHERE user_id = :u AND code = :c
+                    ORDER BY created_at DESC LIMIT 1"""),
             {"u": session["mfa_user_id"], "c": code},
         ).mappings().first()
 
         if not row:
+            log_attempt(ip, session.get("mfa_email"), "mfa", False)
             return {"ok": False, "error": "invalid code"}, 401
         if row["expires_at"] < now:
             conn.execute(text("DELETE FROM mfa_codes WHERE id = :id"), {"id": row["id"]})
+            log_attempt(ip, session.get("mfa_email"), "mfa", False)
             return {"ok": False, "error": "code expired"}, 401
 
-        # OK → takarítás
+        # OK
         conn.execute(text("DELETE FROM mfa_codes WHERE user_id = :u"), {"u": session["mfa_user_id"]})
 
-    # finalize login
     session["user_id"] = session.pop("mfa_user_id")
-    session["email"] = session.pop("mfa_email")
-    session["role"] = session.pop("mfa_role")
+    session["email"]   = session.pop("mfa_email")
+    session["role"]    = session.pop("mfa_role")
 
+    log_attempt(ip, session["email"], "mfa", True)
     return redirect(url_for("home"))
+
+@app.route("/resend-verification", methods=["GET", "POST"])
+def resend_verification():
+    if request.method == "GET":
+        return render_template("resend.html")
+
+    ip = client_ip()
+    email = (request.form.get("email") or "").strip().lower()
+
+    # rate limit: max 3/óra / email + IP
+    window = datetime.now(timezone.utc) - timedelta(hours=1)
+    with engine.connect() as conn:
+        cnt = conn.execute(
+            text("""SELECT COUNT(*) FROM auth_attempts
+                    WHERE kind='resend' AND ts > :ws AND (email=:em OR ip=:ip)"""),
+            {"ws": window, "em": email, "ip": ip},
+        ).scalar()
+    if (cnt or 0) >= 3:
+        return {"ok": False, "error": "too many requests"}, 429
+
+    # próbálunk új tokent küldeni, de a válasz mindig általános
+    try:
+        with engine.begin() as conn:
+            u = conn.execute(
+                text("SELECT id, is_verified FROM users WHERE email=:em LIMIT 1"),
+                {"em": email},
+            ).mappings().first()
+            if u and not u["is_verified"]:
+                token = make_verify_token()
+                expires = datetime.now(timezone.utc) + timedelta(hours=24)
+                conn.execute(text("DELETE FROM verify_tokens WHERE user_id = :u"), {"u": u["id"]})
+                conn.execute(
+                    text("INSERT INTO verify_tokens (user_id, token, expires_at) VALUES (:u,:t,:e)"),
+                    {"u": u["id"], "t": token, "e": expires},
+                )
+                link = url_for("verify", token=token, _external=True)
+                send_verification_email(email, link)
+        log_attempt(ip, email, "resend", True)
+    except Exception:
+        log_attempt(ip, email, "resend", False)
+
+    # mindig ugyanazt válaszoljuk (privacy)
+    return {"ok": True, "message": "If the address exists and is unverified, a new link was sent."}
+
+@app.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "GET":
+        return render_template("change_password.html")
+
+    cur = request.form.get("current") or ""
+    new = request.form.get("new") or ""
+    if len(new) < 8:
+        return {"ok": False, "error": "password too short"}, 400
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT password_hash FROM users WHERE id=:id"),
+            {"id": session["user_id"]},
+        ).mappings().first()
+
+    try:
+        ph.verify(row["password_hash"], cur)
+    except Exception:
+        return {"ok": False, "error": "current password wrong"}, 401
+
+    new_hash = ph.hash(new)
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE users SET password_hash=:h WHERE id=:id"),
+            {"h": new_hash, "id": session["user_id"]},
+        )
+        conn.execute(text("DELETE FROM mfa_codes WHERE user_id = :u"), {"u": session["user_id"]})
+
+    return {"ok": True}
+
 
 
 @app.get("/verify")
